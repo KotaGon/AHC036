@@ -1,0 +1,80 @@
+#!/bin/bash
+
+##############
+## function ##
+##############
+function EXE_CMD()
+{
+  ./a.out < $1 > $2 
+  cat $2 | pbcopy 
+}
+
+function JUDGE_CMD()
+{
+  cd $JUDGE_DIR
+  cargo run --release --bin tester ../a.out < $1 > $2
+  cat $2 | pbcopy 
+  cd ../
+}
+
+function GET_FILE()
+{
+  if [ $1 = "input" ]; then
+    echo "./tools/in/$2.txt";
+  elif [ $1 = "output" ]; then
+    echo "./tools/out/$2.out.txt";
+  fi  
+}
+
+##############
+## variable ##
+##############
+SRC=$2
+if [ $SRC = "" ]; then
+  SRC="main.cc"
+fi
+#SRC="main.cc"
+JUDGE_DIR="./tools"
+JUDGE_EXE="judge"
+
+#############
+## compile ##
+#############
+c++ -std=c++1z -O3 -Wall $SRC
+
+#echo "End Compile! Start Simulations"
+
+###############
+## main part ##
+###############
+
+# All-Case 
+if [ $1 = "ALL" ]; then
+
+  rm $JUDGE_DIR/result.txt
+  for i in `seq 0 49`; do
+    i=`printf %04d $i`
+    INPUT=`GET_FILE "input" $i`
+    OUTPUT=`GET_FILE "output" $i`
+    # excutes src code 
+    #EXE_CMD $INPUT $OUTPUT 2>> result.txt
+    # excutes judge code 
+    JUDGE_CMD $INPUT $OUTPUT 
+  done
+
+  #gets summation of score
+  #./calc_score
+
+# only one-case
+else
+
+  i=`printf %04d $1`
+  INPUT=`GET_FILE "input" $i`
+  OUTPUT=`GET_FILE "output" $i`
+  # excutes src code 
+  EXE_CMD $INPUT $OUTPUT
+  # excutes judge code 
+  #JUDGE_CMD $INPUT $OUTPUT
+  
+fi
+
