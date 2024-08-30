@@ -6,12 +6,15 @@
 #include <sstream>
 #include <stack>
 #include <format>
+#include <random>
+
 #define LOCALTEST
 using namespace std;
 
 const int INF = 1e9;
 const int NONE = -1;
 const int INITIAL_DIST = 10000;
+vector<uint32_t> HASHTABLE;
 
 void print(vector<int> &vec)
 {
@@ -145,18 +148,18 @@ static unsigned long xor128()
 	return (w = (w ^ (w >> 19)) ^ (t ^ (t >> 8)));
 }
 
-void myshuffle(vector<int> &ary, int size, bool flag)
-{
-	for (int i = 0; i < size; i++)
-	{
-		int j = xor128() % size;
-		// if(flag && (i == size - 1 || j == size - 1)) continue;
-		if (flag && (i == 0 || j == 0))
-			continue;
-		auto t = ary[i];
-		ary[i] = ary[j];
-		ary[j] = t;
-	}
+uint32_t generate_random_uint32() {
+    return static_cast<uint32_t>(xor128());
+}
+
+template <typename T>
+void shuffleVector(std::vector<T>& container) {
+    // ランダムデバイスとメルセンヌ・ツイスターエンジンを用意
+    std::random_device rd; // ランダムデバイス (シード生成器)
+    std::mt19937 g(rd());  // メルセンヌ・ツイスター19937エンジン
+
+    // シャッフル
+    std::shuffle(container.begin()+1, container.end(), g);
 }
 
 double rnd()
@@ -440,27 +443,30 @@ public:
 
 class actionClass
 {
+public:
+	using Int = long long int;
 private:
+	Int field;
 public:
 	actionClass() = default;
-	int left, right, index, direct, sig;
+	actionClass(Int left, Int right, Int index, Int direct, Int sig) { encode(left, right, index, direct, sig); }
+	void encode(Int left, Int right, Int index, Int direct, Int sig) { field = left | (right << 11ll) | (index << 22ll) | (direct << 33ll) | (sig << 44ll);	}
+	tuple<int, int, int, int, int> decode() { return {field & 2047ull, (field >> 11ll) & 2047ll, (field >> 22ll) & 2047ll, (field >> 33ll) & 2047ll, (field >> 44ll)}; }
 };
 
 class evaluatorClass
 {
 private:
+	using Int = int;
+	//int n_achievements, dist;
+	Int field;
 public:
 	evaluatorClass() = default;
-	evaluatorClass(int n_achievements, int dist) : n_achievements(n_achievements), dist(dist) {}
-	int n_achievements, dist;
-	bool operator<(const evaluatorClass &other) const
-	{
-		return n_achievements != other.n_achievements ? n_achievements < other.n_achievements : dist > other.dist;
-	}
-	bool operator>(const evaluatorClass &other) const
-	{
-		return n_achievements != other.n_achievements ? n_achievements > other.n_achievements : dist < other.dist;
-	}
+	evaluatorClass(Int dist1, Int dist2, Int n_achievements) { encode(dist1, dist2, n_achievements); }
+	void encode(Int dist1, Int dist2, Int n_achievements) { field = (128 - (Int) dist1 / INITIAL_DIST) | ((128 - (Int) dist2 / INITIAL_DIST) << 7) | (n_achievements << 14); }
+	tuple<int, int, int> decode() { return {(128 - field & 127) * INITIAL_DIST, (128 - (field >> 7) & 127) * INITIAL_DIST, (field >> 14)}; } 
+	bool operator < (const evaluatorClass &other) const { return field < other.field; }
+	bool operator > (const evaluatorClass &other) const { return field > other.field; }
 };
 
 class candidateClass
@@ -491,11 +497,18 @@ public:
 	evaluatorClass evaluator;
 	bitset<600> exists;
 	int id, rank;
+	
+	uint32_t hash(const vector<int> &signal)
+	{
+		uint32_t ret = 0;
+		for(auto e : signal) if(e != NONE) ret ^= HASHTABLE[e+1];
+		return ret;
+	}
 
 	void set(int left, int right, int index, int direct, int sig, int id_, int rank_)
 	{
-		action.left = left; action.right = right; action.index = index;	action.direct = direct; 
-		action.sig = sig; id = id_; rank = rank_;
+		action = {left, right, index, direct, sig};
+		id = id_; rank = rank_;
 	}
 	const vector<int> &new_signal(signalAClass &signalA, signalBClass &signalB)
 	{
@@ -505,14 +518,15 @@ public:
 		//signal.assign(signal.size(), NONE);
 		for(auto &s : signal) s = NONE;
 
-		int left = action.left, right = action.right, index = action.index, a = action.direct;
+		auto [left, right, index, a, _] = action.decode();
+
 		int j = 0;
 		auto &listB = signalB.lists;
 		auto &listA = signalA.lists;
 		const int size = signalB.lists.size();
 		for (int i = 0; i < size; ++i)
 		{
-			if (left <= i && i < right && a == -1)
+			if (left <= i && i < right && a ==0)
 				signal[j++] = index + i - right + 1;
 			else if (left <= i && i < right && a == 1)
 				signal[j++] = index + i - left;
@@ -522,11 +536,7 @@ public:
 		
 		for (auto a : signal)
 			if (a != NONE)
-				assert(listA[a] < 600);
-		for (auto a : signal)
-			if (a != NONE)
 				exists[listA[a]] = 1;
-		
 		
 		return signal;
 	}
@@ -542,8 +552,7 @@ public:
 		uf = UnionFinding(LB);
 	}
 
-	unordered_map<long long int, int> hashMap;
-	hash<bitset<600>> bitsetHasher;
+	unordered_map<uint32_t, int> hashMap;
 	vector<candidateClass> candidates, candidates_all;
 	UnionFinding uf;
 
@@ -559,86 +568,38 @@ public:
 		auto &graph = input.graph;
 		auto &destinations  = input.dest_pos;
 		
-		int n_a = rank;
-		int dist_min = INF;
+		int n_a = rank, n_a2 = rank + 1 < input.N ? rank + 1 : rank;
+		int dist_min = INF, dist_min_next = INF;
+
 		do
 		{
-			int dest = destinations[n_a];
+			int dest = destinations[n_a], dest2 = destinations[n_a2];
 			dist_min = INF;
+			dist_min_next = INF;
 
 			for(int index = left; index <= right; ++index)
 			{
 				int a = signalA.lists[index];
-				if (a != NONE && dist_min > graph.sols[a][dest])
-					dist_min = input.graph.sols[a][dest];
+				if (a != NONE && dist_min > graph.sols[dest][a])
+					dist_min = input.graph.sols[dest][a];
+				if (a != NONE && dist_min_next > graph.sols[dest2][a])
+					dist_min_next = input.graph.sols[dest2][a];
+					
 			}
 			if (dist_min == 0)
 				n_a += 1;
 		} while (dist_min == 0);
 
-		return {n_a, dist_min};
+		return {dist_min_next, dist_min, n_a};
 	}
 
 	void push(inputClass &input, signalAClass &signalA, signalBClass &signalB, temporaryHelperClass &tempHelper)
 	{
-		int left = tempHelper.action.left, right = tempHelper.action.right;
-		int index = tempHelper.action.index, a = tempHelper.action.direct;
-
-		if (a == -1 && index - right - 1 + left < 0)
-			return;
-		else if (a == 1 && index + right - 1 - left >= signalB.lists.size())
-			return;
-		//timer3.start();	
-		const vector<int> &p = tempHelper.new_signal(signalA, signalB);
-		//e3 += timer3.elapsed();
-		long long int bitsetHash = bitsetHasher(tempHelper.exists);
-		
-		if (hashMap[bitsetHash])
-			return;
-
-		timer3.start();
 		candidateClass candidate;
 		candidate.parent    = tempHelper.id;
 		candidate.action    = tempHelper.action;
 		candidate.evaluator = tempHelper.evaluator;
-		hashMap[bitsetHash] = candidates_all.size();
-		candidates_all.push_back(candidate);
-		e3 += timer3.elapsed();
-	}
-
-	void push(inputClass &input, signalAClass &signalA, temporaryHelperClass &tempHelper, selectorClass &selector)
-	{
-		int rank = tempHelper.rank, id = tempHelper.id;
-		auto &p = tempHelper.signal;
-		// long long int bitsetHash = selector.bitsetHasher(tempHelper.exists);
-		// if (selector.hashMap[bitsetHash])
-		// {
-		// 	return;
-		// }
-
-		int n_a = rank;
-		int dist_min = INF;
-		do
-		{
-			int dest = input.dest_pos[n_a];
-			dist_min = INF;
-			for (auto index : p)
-			{
-				int a = signalA.lists[index];
-				if (a != NONE && dist_min > input.graph.sols[a][dest])
-					dist_min = input.graph.sols[a][dest];
-			}
-			if (dist_min == 0)
-				n_a += 1;
-		} while (dist_min == 0);
-
-		candidateClass candidate;
-		candidate.parent = id;
-		candidate.action = tempHelper.action;
-		candidate.evaluator = {n_a, dist_min};
-
-		// selector.hashMap[bitsetHash] = selector.candidates.size();
-		selector.candidates.push_back(candidate);
+		candidates_all.push_back(std::move(candidate));
 		
 		return;
 	}
@@ -647,14 +608,19 @@ public:
 	{
 		int ret = true;
 		const vector<int> &p = tempHelper.new_signal(signalA, signalB);
-
+		auto hash = tempHelper.hash(p);
+		
+		if(hashMap[hash]) return false;
+		hashMap[hash] = 1;
+		
 		uf.clear();
 		for (int i = 0; i < p.size(); ++i)
 		{
 			for (int j = i + 1; j < p.size(); ++j)
 			{
+				if(p[i] == NONE or p[j] == NONE) continue;
 				int from = signalA.lists[p[i]], to = signalA.lists[p[j]];
-				if (from != NONE && to != NONE && graph.all_edge[from][to].dist > 0)
+				if (graph.all_edge[from][to].dist > 0)
 				{
 					uf.Union(i, j);
 				}
@@ -664,6 +630,7 @@ public:
 		for (int i = 1; i < signalB.lists.size(); ++i)
 			if (uf.root(i) != uf.root(0) && p[i] >= 0)
 				ret = false;
+		
 		return ret;
 	}
 
@@ -672,6 +639,8 @@ public:
 		tempHelper.action = candidate.action;
 		if(!valid(signalA, signalB, graph, tempHelper)) 
 			return;
+		// auto bitsetHash = bitsetHasher(tempHelper.exists);
+		// hashMap[bitsetHash] = 1;
 		candidates.push_back(candidate);
 	}
 };
@@ -684,7 +653,7 @@ public:
 	stateClass() = default;
 	stateClass(signalBClass &signal) : signal(signal) {}
 	int id = 0, parent = -1, rank = 0;
-	int now_dist = INF;
+	int now_dist = 63 * INITIAL_DIST;
 	signalBClass signal;
 
 	void transition(int new_id, inputClass &input, signalAClass &signalA, temporaryHelperClass &tempHelper, candidateClass &candidate)
@@ -693,16 +662,18 @@ public:
 		signal.lists = tempHelper.new_signal(signalA, signal);
 		signal.exists = tempHelper.exists;
 		id = new_id;
-		rank = candidate.evaluator.n_achievements;
-		now_dist = candidate.evaluator.dist;
-
+		auto [dist2, dist, n_achievements] = candidate.evaluator.decode();
+		// rank = candidate.evaluator.n_achievements;
+		// now_dist = candidate.evaluator.dist;
+		rank = n_achievements;
+		now_dist = dist;
 		return;
 	}
 
 	void expand(inputClass &input, signalAClass &signalA, temporaryHelperClass &tempHelper, selectorClass &selector)
 	{
 		auto &graph = input.graph;
-		auto &dest  = input.dest_pos;
+		//auto &dest  = input.dest_pos;
 
 		bool initial_condition = true;
 		for (auto &sig : signal.lists)
@@ -711,6 +682,8 @@ public:
 		const int LB = signal.lists.size();
 		if (initial_condition)
 			signal.lists[0] = 0;
+
+		evaluatorClass now_evaluator = {now_dist, now_dist, rank};
 
 		for (auto &sig : signal.lists)
 		{
@@ -724,15 +697,18 @@ public:
 				{
 					if (signal.exists[signalA.lists[index]])
 						continue;
-					for (int direct = -1; direct <= 1; direct += 2)
+					for (int direct = 0; direct <= 1; ++direct)
 					{
-						for (int j = 1; j <= LB; ++j)
+						for (int j = (int)0.5 * LB; j <= LB; ++j)
 						{
-							if(direct == -1) 
+							if(direct == 0 && index-j+1 < 0) break;
+							else if(direct == 1 && index + j - 1 >= input.LA) break;
+							if(direct == 0) 
 								tempHelper.evaluator = selector.estimate(rank, index-j+1, index, signalA, input);
 							else 
 								tempHelper.evaluator = selector.estimate(rank, index, index + j - 1, signalA, input);
-							if(tempHelper.evaluator.n_achievements <= rank && tempHelper.evaluator.dist > now_dist) 
+
+							if(tempHelper.evaluator < now_evaluator)
 								continue;
 
 							for (int pos = 0; pos <= LB - j; ++pos)
@@ -740,10 +716,10 @@ public:
 								int left = pos, right = pos + j;
 								tempHelper.set(left, right, index, direct, sig, id, rank);
 								selector.push(input, signalA, signal, tempHelper);
-							}
 
-							if (initial_condition)
-								break;
+								if (initial_condition)
+									break;
+							}
 						}
 					}
 				}
@@ -780,6 +756,9 @@ public:
 	int init()
 	{
 		input.graph.dijkstra();
+		HASHTABLE.resize(input.N);
+		for (int i = 0; i <= input.N; ++i) 
+        	HASHTABLE[i] = generate_random_uint32();  
 		return 0;
 	}
 
@@ -812,7 +791,8 @@ public:
 			for (int i = 0; i < graph.V; ++i)
 				tours.push_back(i);
 
-			myshuffle(tours, graph.V, true);
+			shuffleVector(tours);
+			//shuffleVector(tours);
 			
 			while (1)
 			{
@@ -891,8 +871,8 @@ public:
 
 		// Prepare
 		int turn;
-		const int beam_width = 20;
-		const int max_turn = 5000;
+		int beam_width = 30;
+		const int max_turn = 3000;
 
 		vector<stateClass> states, next_states;
 		states.reserve(beam_width);
@@ -908,34 +888,30 @@ public:
 		// Start
 		for (turn = 0; turn < max_turn; ++turn)
 		{
-			if (states.front().rank == input.N)
+			if(timer.elapsed() > 1.5) beam_width = 15;
+			if (states.front().rank >= input.N)
 				break;
 
 			timer1.start();
 			selector.clear();
-			cerr << "Start Ex" << endl;
 			for (auto &state : states)
 				state.expand(input, signalA, tempHelper, selector);
-			cerr << "End Ex" << endl;
 			e1 += timer1.elapsed();
 			
 			timer2.start();
 			auto &candidates_all = selector.candidates_all;
-			cerr << "Start Acc" << candidates_all.size() << endl ;
+			//candidates_all.resize(min(beam_width*100, (int) candidates_all.size()));
 			sort(candidates_all.begin(), candidates_all.end(), greater<>());
-			cerr << "End Sort" << endl;
 			for(auto &candidate : candidates_all)
-			{
+			{	
 				selector.accept(signalA, states[candidate.parent].signal, input.graph, tempHelper, candidate);
 				if(selector.candidates.size() >= beam_width) 
 					break;
 			}
 			e2 += timer2.elapsed();
-			cerr << "End Acc" << endl;
 			
 			auto &candidates = selector.candidates;
 			const int size = min(beam_width, (int)candidates.size());
-			cerr << size << endl;
 			//partial_sort(candidates.begin(), candidates.begin() + size, candidates.end(), greater<>());
 			
 #ifdef LOCALTEST
@@ -951,7 +927,10 @@ public:
 				next_states[i] = states[candidate.parent];
 #ifdef LOCALTEST
 				if (i == 0)
-					logHandler.log("   └─BestStateLog Rank {} Ache {} Dist {}", next_states[i].rank, candidate.evaluator.n_achievements, candidate.evaluator.dist);
+				{
+					auto [a, dist, n_achievements] = candidate.evaluator.decode();
+					logHandler.log("   └─BestStateLog Rank {} Ache {} Dist {}", next_states[i].rank, n_achievements, dist);
+				}					
 #endif 
 				next_states[i].transition(i, input, signalA, tempHelper, candidate);
 			}
@@ -1025,10 +1004,12 @@ public:
 		{
 			auto &action = node.action;
 			tempHelper.action = action;
-
+			
+			auto [left, right, index, direct, sig] = action.decode();
 			if (!initial_state)
 			{
-				to = action.sig;
+				//to = action.sig;
+				to = sig;
 				vector<int> route;
 				visited = 0; visited[signalA.lists[from]] = 1;
 				route_dfs(signalA.lists[from], signalA.lists[to], visited, signalB, route);
@@ -1037,16 +1018,24 @@ public:
 					cout << "m " << route[i] << endl;								
 			}
 
-			if (action.direct == 1)
-				cout << "s " << (action.right - action.left) << " " << action.index << " " << action.left << endl;
+			// if (action.direct == 1)
+			// 	cout << "s " << (action.right - action.left) << " " << action.index << " " << action.left << endl;
+			// else
+			// 	cout << "s " << (action.right - action.left) << " " << action.index - action.right + action.left + 1 << " " << action.left << endl;
+
+			if (direct == 1)
+				cout << "s " << (right - left) << " " << index << " " << left << endl;
 			else
-				cout << "s " << (action.right - action.left) << " " << action.index - action.right + action.left + 1 << " " << action.left << endl;
+				cout << "s " << (right - left) << " " << index - right + left + 1 << " " << left << endl;
 
 			signalB.lists = tempHelper.new_signal(signalA, signalB);
 			signalB.exists = tempHelper.exists;
 
-			from = action.sig;
-			to = action.index;
+			// from = action.sig;
+			// to = action.index;
+			//auto [left2, right2, index2, direct2, sig2] = 
+			from = sig; 
+			to = index;
 			cout << "m " << signalA.lists[to] << endl;
 
 			from = to;
