@@ -1,5 +1,5 @@
 COMPILER = g++
-CFLAGS   = -g -Wall -O3 -std=c++1z
+CFLAGS   = -g -Wall -O3 -std=c++20
 LDFLAGS  = -lscip 
 LIBS     = -L/usr/local/lib 
 INCLUDE  = -I./include -I./ -I/usr/local/include
